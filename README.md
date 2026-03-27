@@ -312,4 +312,5 @@ venv/bin/python3 -m unittest discover tests/ -v
 
 ## 📄 License
 
-See [LICENSE](LICENSE) for details.
+Copyright © ImmuneHPC+. All rights reserved.
+This software is provided for viewing purposes only. No part of this codebase may be used, copied, modified, merged, published, distributed, sublicensed, or sold without explicit written permission from the author(s).
