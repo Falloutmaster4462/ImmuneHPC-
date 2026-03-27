@@ -1,0 +1,199 @@
+---
+# ansible/site.yml — ImmuneHPC+ config reapply playbook
+#
+# This playbook is invoked by the SelfHealingEngine reapply_config strategy.
+# It is idempotent and safe to run repeatedly.
+#
+# Usage (manual):
+#   ansible-playbook -i inventory.ini --limit node01 site.yml
+#
+# Required variables (set in group_vars or extra-vars):
+#   target_host: <hostname>  — limit to this node (set by controller)
+
+- name: ImmuneHPC+ Node Config Reapply
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: true
+  become: true
+
+  vars:
+    slurm_conf_src: "{{ playbook_dir }}/files/slurm.conf"
+    munge_key_src:  "{{ playbook_dir }}/files/munge.key"
+    ntp_servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+
+  tasks:
+
+    # ── Package state ─────────────────────────────────────────────────
+    - name: Ensure required packages are installed
+      dnf:
+        name:
+          - slurm
+          - slurm-slurmd
+          - munge
+          - prometheus-node-exporter
+          - audit
+          - firewalld
+          - chrony
+          - python3
+          - numactl
+          - hwloc
+        state: present
+
+    # ── SELinux ───────────────────────────────────────────────────────
+    - name: Ensure SELinux is enforcing
+      selinux:
+        policy: targeted
+        state: enforcing
+
+    # ── Firewalld ─────────────────────────────────────────────────────
+    - name: Ensure firewalld is running
+      systemd:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Open Slurm ports
+      firewalld:
+        port: "{{ item }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop:
+        - "6817"   # slurmctld
+        - "6818"   # slurmd
+        - "6819"   # slurmdbd
+
+    - name: Open node_exporter port
+      firewalld:
+        port: "9100/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+
+    # ── Munge auth ────────────────────────────────────────────────────
+    - name: Deploy munge key
+      copy:
+        src: "{{ munge_key_src }}"
+        dest: /etc/munge/munge.key
+        owner: munge
+        group: munge
+        mode: "0400"
+      notify: Restart munge
+
+    - name: Ensure munge is running
+      systemd:
+        name: munge
+        state: started
+        enabled: true
+
+    # ── Slurm ─────────────────────────────────────────────────────────
+    - name: Deploy slurm.conf
+      copy:
+        src: "{{ slurm_conf_src }}"
+        dest: /etc/slurm/slurm.conf
+        owner: slurm
+        group: slurm
+        mode: "0644"
+      notify: Restart slurmd
+
+    - name: Ensure slurmd is running
+      systemd:
+        name: slurmd
+        state: started
+        enabled: true
+
+    # ── NTP ───────────────────────────────────────────────────────────
+    - name: Configure chrony NTP servers
+      template:
+        src: chrony.conf.j2
+        dest: /etc/chrony.conf
+        mode: "0644"
+      notify: Restart chronyd
+
+    - name: Ensure chronyd is running
+      systemd:
+        name: chronyd
+        state: started
+        enabled: true
+
+    # ── Auditd ────────────────────────────────────────────────────────
+    - name: Ensure auditd is running
+      systemd:
+        name: auditd
+        state: started
+        enabled: true
+
+    - name: Deploy audit rules for ImmuneHPC monitoring
+      copy:
+        dest: /etc/audit/rules.d/immunehpc.rules
+        content: |
+          # ImmuneHPC+ audit rules
+          -w /etc/passwd -p wa -k identity
+          -w /etc/sudoers -p wa -k sudoers
+          -a always,exit -F arch=b64 -S setuid -k privilege_escalation
+          -a always,exit -F arch=b64 -S setgid -k privilege_escalation
+          -w /usr/bin/su -p x -k su_execution
+        mode: "0640"
+      notify: Reload auditd
+
+    # ── Prometheus node_exporter ──────────────────────────────────────
+    - name: Ensure node_exporter is running
+      systemd:
+        name: prometheus-node-exporter
+        state: started
+        enabled: true
+
+    # ── SSH hardening ─────────────────────────────────────────────────
+    - name: Harden SSH config
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { regexp: "^#?PermitRootLogin",     line: "PermitRootLogin prohibit-password" }
+        - { regexp: "^#?PasswordAuthentication", line: "PasswordAuthentication no" }
+        - { regexp: "^#?PubkeyAuthentication", line: "PubkeyAuthentication yes" }
+        - { regexp: "^#?X11Forwarding",        line: "X11Forwarding no" }
+      notify: Restart sshd
+
+    # ── System tuning for HPC ─────────────────────────────────────────
+    - name: Set HPC kernel parameters
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+      loop:
+        - { key: "vm.swappiness",              value: "10" }
+        - { key: "net.core.rmem_max",          value: "134217728" }
+        - { key: "net.core.wmem_max",          value: "134217728" }
+        - { key: "net.ipv4.tcp_rmem",          value: "4096 87380 134217728" }
+        - { key: "net.ipv4.tcp_wmem",          value: "4096 65536 134217728" }
+        - { key: "kernel.numa_balancing",      value: "0" }
+        - { key: "vm.nr_hugepages",            value: "1024" }
+
+  handlers:
+    - name: Restart munge
+      systemd:
+        name: munge
+        state: restarted
+
+    - name: Restart slurmd
+      systemd:
+        name: slurmd
+        state: restarted
+
+    - name: Restart chronyd
+      systemd:
+        name: chronyd
+        state: restarted
+
+    - name: Reload auditd
+      command: augenrules --load
+
+    - name: Restart sshd
+      systemd:
+        name: sshd
+        state: restarted

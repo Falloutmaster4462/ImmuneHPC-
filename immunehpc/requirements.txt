@@ -1,0 +1,5 @@
+pyyaml>=6.0
+# Optional but recommended:
+# paramiko>=3.0           # pure-Python SSH (fallback if system ssh unavailable)
+# prometheus-client>=0.17 # richer Prometheus export
+# scikit-learn>=1.3       # replace stub IsolationForest with real implementation

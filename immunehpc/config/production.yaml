@@ -1,0 +1,140 @@
+# ImmuneHPC+ Production Configuration — Rocky Linux
+# Copy to config/production.yaml and edit before running.
+
+system:
+  name: ImmuneHPC+
+  loop_interval_sec: 10         # MAPE-K tick rate (seconds)
+  log_level: INFO
+  audit_log: logs/audit.jsonl   # structured event audit trail
+
+# ── SSH access to all managed nodes ──────────────────────────────────────
+ssh:
+  user: root                    # SSH user (use a dedicated service account in production)
+  key_path: /etc/immunehpc/id_ed25519   # passwordless SSH key
+
+# ── Cluster node list ─────────────────────────────────────────────────────
+cluster:
+  nodes:
+    - node01.cluster.local
+    - node02.cluster.local
+    - node03.cluster.local
+    # Add all nodes here — use FQDNs or IPs reachable from controller
+
+# ── Monitor ───────────────────────────────────────────────────────────────
+monitor:
+  telemetry_interval_sec: 10    # how often to poll each node
+  health_threshold: 0.6         # H_i below this triggers HEALTH_DEGRADED
+  node_exporter_port: 9100      # Prometheus node_exporter port on each node
+  use_ipmi: true                # read temperature/power via ipmitool
+  use_gpu: false                # set true if nodes have NVIDIA GPUs
+  use_slurm: true               # collect job state from Slurm squeue
+  metrics:
+    - cpu_usage
+    - gpu_usage
+    - temperature
+    - network_rx
+    - network_tx
+    - memory_usage
+    - job_queue_depth
+
+# ── Anomaly Detection ─────────────────────────────────────────────────────
+anomaly:
+  method: hybrid                # statistical | ml | hybrid
+  window_size: 60               # rolling window (seconds of samples)
+  z_score_threshold: 3.0        # sigma threshold for statistical detector
+  sensitivity: 0.85
+
+# ── Quarantine ────────────────────────────────────────────────────────────
+quarantine:
+  auto_isolate: true
+  max_quarantine_sec: 600       # 10 minutes before forced release attempt
+
+# ── Self-Healing ──────────────────────────────────────────────────────────
+healing:
+  strategy_order:
+    - restart_service
+    - reapply_config
+    - rollback
+    - reimage_node
+  max_attempts: 2
+  backoff_sec: 30
+
+  # Ansible
+  ansible_playbook: ansible/site.yml
+  ansible_inventory: ansible/inventory.ini
+
+  # Cobbler (for PXE reimage)
+  cobbler_host: cobbler.cluster.local
+  cobbler_user: cobbler
+  cobbler_password: ""          # set via env: IMMUNEHPC_COBBLER_PASS
+
+  # IPMI (for power-cycling nodes during reimage)
+  bmc_user: admin
+  bmc_password: ""              # set via env: IMMUNEHPC_BMC_PASS
+
+# ── Optimisation ──────────────────────────────────────────────────────────
+optimizer:
+  objectives:
+    alpha: 0.25   # latency weight        (L)
+    beta:  0.25   # power weight          (P)
+    gamma: 0.25   # failure rate weight   (F)
+    delta: 0.25   # security risk weight  (S)
+  algorithm: nsga2
+  interval_sec: 60              # run optimisation every 60 s
+
+# ── Defense ───────────────────────────────────────────────────────────────
+defense:
+  auto_mitigate: true
+  known_keys_path: config/known_host_keys.json   # SSH TOFU key store
+  trust_threshold: 0.5
+
+# ── ASL (Autonomous Self-Improvement) ────────────────────────────────────
+asl:
+  enabled: true
+  patch_trust_threshold: 0.75
+  sandbox_timeout_sec: 120
+  canary_fraction: 0.10         # 10% of nodes get canary deployment
+  canary_soak_sec: 60           # seconds to observe canary before promote/rollback
+  code_gen_interval: 20         # attempt ΔC patch every N MAPE-K steps
+
+  # ── LLM backend for ΔC code generation ──────────────────────────────
+  # Remove or comment out this entire 'llm:' block to disable ΔC (Δθ/Δπ
+  # from the RL agent still run regardless).
+  llm:
+    provider: auto              # auto | ollama | groq | google | openrouter
+
+    # Ollama (recommended — free, local, no rate limits, air-gap capable)
+    # Install: curl -fsSL https://ollama.com/install.sh | sh
+    # Pull model: ollama pull qwen3-coder:32b
+    #             ollama pull qwen2.5-coder:7b      # smaller, CPU-friendly
+    ollama_host: http://localhost:11434
+    ollama_model: qwen3-coder:32b
+
+    # Groq free tier (no credit card — sign up at console.groq.com)
+    # Set env var: export GROQ_API_KEY=gsk_...
+    groq_api_key: ""            # or use env GROQ_API_KEY
+    groq_model: llama-3.3-70b-versatile
+
+    # Google AI Studio free tier (sign up at aistudio.google.com)
+    # Set env var: export GOOGLE_API_KEY=AIza...
+    google_api_key: ""          # or use env GOOGLE_API_KEY
+    google_model: gemini-2.0-flash
+
+    # OpenRouter free community models (sign up at openrouter.ai)
+    # Set env var: export OPENROUTER_API_KEY=sk-or-...
+    openrouter_api_key: ""      # or use env OPENROUTER_API_KEY
+    openrouter_model: "deepseek/deepseek-r1:free"
+
+    timeout_sec: 60
+    max_tokens: 1200
+    temperature: 0.15           # low = more deterministic code output
+
+  rl:
+    learning_rate: 0.001
+    discount_factor: 0.95
+    epsilon: 0.1
+
+# ── Prometheus Pushgateway (optional) ────────────────────────────────────
+prometheus:
+  pushgateway_url: ""           # e.g. http://prometheus-pushgateway:9091
+  # If empty, metrics are not pushed (still logged locally)

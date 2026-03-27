@@ -1,0 +1,13 @@
+# /etc/immunehpc/environment
+# Loaded by the systemd service. Keep this file chmod 600, owned by immunehpc.
+#
+# DO NOT put passwords in production.yaml — use this file instead.
+
+# IPMI/BMC password for all nodes (or use per-node entries in config)
+IMMUNEHPC_BMC_PASS=changeme
+
+# Cobbler password for PXE reimage
+IMMUNEHPC_COBBLER_PASS=changeme
+
+# SSH private key path (must be readable by immunehpc user)
+IMMUNEHPC_SSH_KEY=/etc/immunehpc/id_ed25519

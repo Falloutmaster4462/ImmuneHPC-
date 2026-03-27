@@ -1,0 +1,50 @@
+[Unit]
+Description=ImmuneHPC+ Autonomous HPC Controller
+Documentation=https://github.com/your-org/immunehpc
+After=network-online.target sshd.service
+Wants=network-online.target
+# If Slurm is on this node, start after it
+After=slurmctld.service
+# If IPMI tools depend on this
+After=ipmi.service
+
+[Service]
+Type=simple
+User=immunehpc
+Group=immunehpc
+WorkingDirectory=/opt/immunehpc
+
+# Config and secrets
+EnvironmentFile=-/etc/immunehpc/environment
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/immunehpc
+
+ExecStart=/opt/immunehpc/venv/bin/python3 /opt/immunehpc/main.py \
+    --config /etc/immunehpc/production.yaml
+
+# Graceful shutdown — give it 30s to flush state
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy — restart on failure, not on clean exit (code 0)
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/immunehpc/logs /opt/immunehpc/config /tmp
+ProtectHome=yes
+PrivateTmp=yes
+# SSH requires network access
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Logging — goes to journald (journalctl -u immunehpc -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=immunehpc
+
+[Install]
+WantedBy=multi-user.target
