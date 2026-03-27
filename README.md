@@ -4,9 +4,7 @@
 
 ImmuneHPC+ continuously monitors, diagnoses, and repairs your HPC cluster — without human intervention. Inspired by biological immune systems, it combines real-time telemetry, ML-based anomaly detection, graduated self-healing, and an **Autonomous Self-improvement Loop (ASL)** that lets the controller evolve its own policies over time.
 
-> **Production build** — this repo wires every module to real infrastructure (Prometheus, SSH, IPMI, Slurm, Ansible, LVM/btrfs, Cobbler). A simulation build (random-walk telemetry, stubbed actions) is available separately for development and testing.
 
----
 
 ## ✨ Features
 
